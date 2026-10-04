@@ -17,6 +17,7 @@ import { Item } from '../entities/item.entity';
 import { Appraisal } from '../entities/appraisal.entity';
 import { Ticket } from '../entities/ticket.entity';
 import { Consignment } from '../entities/consignment.entity';
+import { ReturnAssessment } from '../entities/return-assessment.entity';
 import { JwtAuthGuard } from '../auth/jwt.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 
@@ -68,7 +69,20 @@ export class SettlementController {
       if (!order) throw new NotFoundException('订单不存在');
       if (!['DELIVERED', 'RETURNED'].includes(order.status)) {
         throw new BadRequestException(
-          `订单当前 ${order.status}，需送达或退货完结后方可结算`,
+          order.status === 'RETURNING'
+            ? '退货家具尚未回库评估，卖家结算暂缓；回库评估确认残值/仓储费/二次上架后再生成结算单'
+            : `订单当前 ${order.status}，需送达或退货完结后方可结算`,
+        );
+      }
+      // 存在处理中的协同工单（色差认定未完成等）→ 卖家结算暂缓至处理结果确认
+      const pendingTickets = await m.find(Ticket, {
+        where: { orderId, status: 'OPEN' as any },
+      });
+      if (pendingTickets.length > 0) {
+        throw new BadRequestException(
+          `该订单有 ${pendingTickets.length} 张处理中工单（${pendingTickets
+            .map((t) => `「${t.title}」`)
+            .join('、')}），卖家结算暂缓，待客服裁定/回库评估确认后再生成结算单`,
         );
       }
       const item = await m.findOne(Item, { where: { id: order.itemId } });
@@ -80,6 +94,20 @@ export class SettlementController {
       });
       if (!item || !consignment) {
         throw new NotFoundException('商品/寄卖信息缺失');
+      }
+      // 退货回库评估单（残值/回库仓储费/二次上架结论）
+      const returnTickets = await m.find(Ticket, {
+        where: { orderId: order.id, resolution: 'RETURN_REFUND' as any },
+      });
+      let assessment: ReturnAssessment | null = null;
+      for (const t of returnTickets) {
+        const found = await m.findOne(ReturnAssessment, {
+          where: { ticketId: t.id },
+        });
+        if (found) {
+          assessment = found;
+          break;
+        }
       }
 
       const rate = Number(appraisal?.commissionRate || 0.15);
@@ -164,7 +192,46 @@ export class SettlementController {
             `配送费（来源：楼层/电梯/旧家具搬出计价；退货返程由平台承担）`,
           );
         }
-        platformIncome = -(refurb + storageFee + deliveryFee);
+        // 回库评估产生的额外仓储/复检处理费，平台吸收，来源为回库评估单
+        const restockStorage = Number(assessment?.restockStorageFee || 0);
+        const restockHandling = Number(assessment?.restockHandlingFee || 0);
+        if (restockStorage > 0) {
+          add(
+            'STORAGE_FEE',
+            restockStorage,
+            `退货回库仓储费 ¥${restockStorage}（来源：回库评估单，库位 ${
+              assessment?.warehouseSlot || item.warehouseSlot || '-'
+            }；退货由平台吸收）`,
+            assessment?.id || null,
+          );
+        }
+        if (restockHandling > 0) {
+          add(
+            'REFURBISH_FEE',
+            restockHandling,
+            `退货复检/重新清洁处理费 ¥${restockHandling}（来源：回库评估单；退货由平台吸收）`,
+            assessment?.id || null,
+          );
+        }
+        platformIncome = -(
+          refurb +
+          storageFee +
+          deliveryFee +
+          restockStorage +
+          restockHandling
+        );
+        if (assessment) {
+          add(
+            'COMPENSATION',
+            0,
+            `回库评估结论：${
+              assessment.decision === 'RE_LISTABLE'
+                ? `可二次上架，残值评估价 ¥${assessment.residualValue}（二次销售的仓储费自回库日重新起算，计入新订单结算）`
+                : '建议报废/捐赠，不再二次上架'
+            }（来源：回库评估单）`,
+            assessment.id,
+          );
+        }
       } else {
         const commission = Math.round(deal * rate * 100) / 100;
         add(
@@ -261,6 +328,7 @@ export class SettlementController {
       Appraisal,
       Ticket,
       Consignment,
+      ReturnAssessment,
     ]),
   ],
   controllers: [SettlementController],

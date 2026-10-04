@@ -61,6 +61,11 @@ function Market() {
                     : `可配送 ${it.deliveryRadiusKm}km`}
                 </span>
                 {it.disassemblable && <span className="tag">可拆装</span>}
+                {Number(it.colorReviewCount) > 0 && (
+                  <span className={`tag ${Number(it.colorAvgScore) <= 3 ? 'tag-warn' : ''}`}>
+                    色差评分 {Number(it.colorAvgScore).toFixed(1)}/5（{it.colorReviewCount} 条）
+                  </span>
+                )}
               </div>
               <p className="muted" style={{ fontSize: 12.5, minHeight: 38 }}>
                 {it.description?.slice(0, 56) || ''}
@@ -185,6 +190,7 @@ function BuyModal({ item, onClose, onDone }: { item: any; onClose: () => void; o
 function MyOrders() {
   const [orders, setOrders] = useState<any[]>([]);
   const [ticketFor, setTicketFor] = useState<any>(null);
+  const [reviewFor, setReviewFor] = useState<any>(null);
   const [ticketId, setTicketId] = useState<string | null>(null);
 
   const load = () => {
@@ -225,6 +231,9 @@ function MyOrders() {
                 {['DELIVERED', 'IN_DELIVERY', 'DELIVERY_SCHEDULED'].includes(o.status) && (
                   <button className="btn ghost sm" onClick={() => setTicketFor(o)}>发起售后/异常工单</button>
                 )}
+                {['DELIVERED', 'SETTLED'].includes(o.status) && (
+                  <button className="btn ghost sm" onClick={() => setReviewFor(o)}>评价色差</button>
+                )}
                 {o.status === 'CREATED' && (
                   <button
                     className="btn danger sm"
@@ -251,12 +260,64 @@ function MyOrders() {
         </div>
       )}
       {ticketFor && <CreateTicketModal order={ticketFor} onClose={() => setTicketFor(null)} onCreated={(id: string) => { setTicketFor(null); setTicketId(id); }} />}
+      {reviewFor && <ColorReviewModal order={reviewFor} onClose={() => setReviewFor(null)} onDone={() => { setReviewFor(null); toast('色差评价已提交'); }} />}
     </div>
   );
 }
 
+function ColorReviewModal({ order, onClose, onDone }: { order: any; onClose: () => void; onDone: () => void }) {
+  const [f, setF] = useState({ colorScore: 5, content: '', photos: '' });
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await api(`/items/${order.itemId}/reviews`, {
+        body: {
+          colorScore: Number(f.colorScore),
+          content: f.content,
+          photos: f.photos ? f.photos.split(/[,，\s]+/).filter(Boolean) : [],
+        },
+      });
+      onDone();
+    } catch (e: any) {
+      toast(e.message, true);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      title={`色差评价 · ${order.code}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn gray" onClick={onClose}>取消</button>
+          <button className="btn" disabled={busy} onClick={submit}>提交评价</button>
+        </>
+      }
+    >
+      <Field label="实物与页面颜色一致性（1 分严重色差 ~ 5 分完全一致）">
+        <select value={f.colorScore} onChange={(e) => setF({ ...f, colorScore: Number(e.target.value) })}>
+          <option value={5}>5 · 完全一致</option>
+          <option value={4}>4 · 轻微光源差异</option>
+          <option value={3}>3 · 有差异可接受</option>
+          <option value={2}>2 · 差异明显</option>
+          <option value={1}>1 · 严重不符</option>
+        </select>
+      </Field>
+      <Field label="评价内容">
+        <textarea style={{ minHeight: 80 }} value={f.content} onChange={(e) => setF({ ...f, content: e.target.value })}
+          placeholder="收货现场光源、与页面差异的具体描述" />
+      </Field>
+      <Field label="现场照片链接（逗号分隔，便于客服核对）">
+        <input value={f.photos} onChange={(e) => setF({ ...f, photos: e.target.value })} placeholder="http://…" />
+      </Field>
+    </Modal>
+  );
+}
+
 function CreateTicketModal({ order, onClose, onCreated }: { order: any; onClose: () => void; onCreated: (id: string) => void }) {
-  const [f, setF] = useState({ type: 'COLOR_DIFFERENCE', title: '', description: '' });
+  const [f, setF] = useState({ type: 'COLOR_DIFFERENCE', title: '', description: '', photos: '' });
   const [busy, setBusy] = useState(false);
   const set = (k: string, v: any) => setF((p) => ({ ...p, [k]: v }));
 
@@ -264,7 +325,15 @@ function CreateTicketModal({ order, onClose, onCreated }: { order: any; onClose:
     if (!f.title || !f.description) return toast('请填写标题和描述', true);
     setBusy(true);
     try {
-      const res = await api('/tickets', { body: { orderId: order.id, ...f } });
+      const res = await api('/tickets', {
+        body: {
+          orderId: order.id,
+          type: f.type,
+          title: f.title,
+          description: f.description,
+          buyerPhotos: f.photos ? f.photos.split(/[,，\s]+/).filter(Boolean) : [],
+        },
+      });
       toast('工单已创建，客服将尽快介入');
       onCreated(res.ticket.id);
     } catch (e: any) {
@@ -297,8 +366,11 @@ function CreateTicketModal({ order, onClose, onCreated }: { order: any; onClose:
       <Field label="标题">
         <input value={f.title} onChange={(e) => set('title', e.target.value)} placeholder="一句话说明问题" />
       </Field>
-      <Field label="详细描述（可写现场情况、照片链接、诉求）">
+      <Field label="详细描述（可写现场情况、诉求）">
         <textarea style={{ minHeight: 100 }} value={f.description} onChange={(e) => set('description', e.target.value)} />
+      </Field>
+      <Field label="现场照片链接（逗号分隔；色差争议请尽量附暖光/自然光下实拍，便于客服核对灯光、原图与修图记录）">
+        <input value={f.photos} onChange={(e) => set('photos', e.target.value)} placeholder="http://…" />
       </Field>
     </Modal>
   );

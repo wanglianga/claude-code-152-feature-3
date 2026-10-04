@@ -90,6 +90,19 @@ export const RESOLUTION: Record<string, string> = {
   CANCEL_CONSIGNMENT: '终止寄卖',
 };
 
+export const COLOR_FINDING: Record<string, { label: string; cls: string }> = {
+  NONE: { label: '待认定', cls: 'gray' },
+  LISTING_INACCURATE: { label: '页面描述不准确', cls: 'red' },
+  NATURAL_LIGHT: { label: '自然光差异·已提示', cls: 'green' },
+  INCONCLUSIVE: { label: '证据不足', cls: 'amber' },
+};
+
+export const RETURN_DECISION: Record<string, { label: string; cls: string }> = {
+  PENDING: { label: '待回库评估', cls: 'amber' },
+  RE_LISTABLE: { label: '可二次上架', cls: 'green' },
+  DISPOSED: { label: '报废/捐赠', cls: 'gray' },
+};
+
 export const ROLE: Record<string, string> = {
   SELLER: '卖家',
   BUYER: '买家',

@@ -20,6 +20,11 @@ import {
 } from '../entities/item.entity';
 import { Consignment } from '../entities/consignment.entity';
 import { Appraisal } from '../entities/appraisal.entity';
+import { Order } from '../entities/order.entity';
+import {
+  PhotoAudit,
+  ItemReview,
+} from '../entities/photo-audit.entity';
 import { JwtAuthGuard, JwtPayload } from '../auth/jwt.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -37,6 +42,39 @@ class AdvanceDto {
   warehouseSlot?: string;
   deliveryRadiusKm?: number;
   listedPrice?: number;
+}
+
+class PhotoAuditDto {
+  lightingSetup?: string;
+  cameraSetup?: string;
+  rawPhotos?: string[];
+  editedPhotos?: string[];
+  retouchNote?: string;
+  colorNoticeOnPage?: boolean;
+  colorNoticeText?: string;
+  colorReference?: string;
+}
+
+class ReviewDto {
+  colorScore: number;
+  content?: string;
+  photos?: string[];
+}
+
+/** 重算商品色差评价均分 */
+async function recalcColorScore(m: DataSource['manager'], itemId: string) {
+  const reviews = await m.find(ItemReview, { where: { itemId } });
+  const item = await m.findOne(Item, { where: { id: itemId } });
+  if (!item) return;
+  if (reviews.length === 0) {
+    item.colorAvgScore = null;
+    item.colorReviewCount = 0;
+  } else {
+    const avg = reviews.reduce((s, r) => s + r.colorScore, 0) / reviews.length;
+    item.colorAvgScore = (Math.round(avg * 10) / 10).toFixed(2);
+    item.colorReviewCount = reviews.length;
+  }
+  await m.save(item);
 }
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
@@ -109,7 +147,80 @@ export class ItemController {
       where: { itemId: id },
       order: { createdAt: 'DESC' },
     });
-    return { item, consignment, appraisal, workLogs };
+    const photoAudit = await this.ds
+      .getRepository(PhotoAudit)
+      .findOne({ where: { itemId: id } });
+    const reviews = await this.ds.getRepository(ItemReview).find({
+      where: { itemId: id },
+      order: { createdAt: 'DESC' },
+    });
+    return { item, consignment, appraisal, workLogs, photoAudit, reviews };
+  }
+
+  /** 仓库/摄影登记上架照片的灯光、原图、修图记录与页面色差提示（色差争议证据链） */
+  @Roles('WAREHOUSE', 'REFURBISHER', 'OPS', 'CS', 'ADMIN')
+  @Post(':id/photo-audit')
+  async upsertPhotoAudit(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: PhotoAuditDto,
+  ) {
+    return this.ds.transaction(async (m) => {
+      const item = await m.findOne(Item, { where: { id } });
+      if (!item) throw new NotFoundException('商品不存在');
+      let audit = await m.findOne(PhotoAudit, { where: { itemId: id } });
+      if (!audit) {
+        audit = m.create(PhotoAudit, { itemId: id, recordedBy: user.sub });
+      }
+      if (dto.lightingSetup != null) audit.lightingSetup = dto.lightingSetup;
+      if (dto.cameraSetup != null) audit.cameraSetup = dto.cameraSetup;
+      if (dto.rawPhotos) audit.rawPhotos = dto.rawPhotos;
+      if (dto.editedPhotos) audit.editedPhotos = dto.editedPhotos;
+      if (dto.retouchNote != null) audit.retouchNote = dto.retouchNote;
+      if (dto.colorNoticeOnPage != null) audit.colorNoticeOnPage = dto.colorNoticeOnPage;
+      if (dto.colorNoticeText != null) audit.colorNoticeText = dto.colorNoticeText;
+      if (dto.colorReference != null) audit.colorReference = dto.colorReference;
+      await m.save(audit);
+      return audit;
+    });
+  }
+
+  /** 买家对已购商品进行色差评价（需有该商品的订单） */
+  @Roles('BUYER')
+  @Post(':id/reviews')
+  async addReview(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: ReviewDto,
+  ) {
+    const score = Number(dto.colorScore);
+    if (!score || score < 1 || score > 5) {
+      throw new BadRequestException('颜色一致性评分需在 1-5 之间');
+    }
+    return this.ds.transaction(async (m) => {
+      const item = await m.findOne(Item, { where: { id } });
+      if (!item) throw new NotFoundException('商品不存在');
+      const order = await m.findOne(Order, {
+        where: { itemId: id, buyerId: user.sub },
+      });
+      if (!order) {
+        throw new BadRequestException('仅购买过该商品的买家可评价颜色一致性');
+      }
+      const review = m.create(ItemReview, {
+        itemId: id,
+        orderId: order.id,
+        authorId: user.sub,
+        authorRole: 'BUYER',
+        authorName: user.name,
+        colorScore: score,
+        content: dto.content || '',
+        photos: dto.photos || [],
+        source: 'BUYER',
+      });
+      await m.save(review);
+      await recalcColorScore(m, id);
+      return review;
+    });
   }
 
   /** 清洁、补漆、维修、拍照、上架描述、入库登记——作业即记账 */
@@ -174,6 +285,7 @@ export class ItemController {
           `商品当前 ${item.status}，不能转到 ${dto.to}；允许：${allowed.join(', ') || '无'}`,
         );
       }
+      const fromStatus = item.status;
       item.status = dto.to as any;
       if (dto.description != null) item.description = dto.description;
       if (dto.photos) item.photos = dto.photos;
@@ -189,6 +301,10 @@ export class ItemController {
           throw new BadRequestException('上架前需填写描述或上传拍照');
         }
         item.listedAt = new Date();
+        // 退货回库二次上架：二次销售仓储费自回库日重新起算
+        if (fromStatus === 'RETURNED' || item.lastRestockAt) {
+          item.enteredWarehouseAt = item.lastRestockAt || new Date();
+        }
         const consignment = await mgr.findOne(Consignment, {
           where: { id: item.consignmentId },
         });
@@ -204,7 +320,7 @@ export class ItemController {
 }
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Item, ItemWorkLog, Consignment, Appraisal])],
+  imports: [TypeOrmModule.forFeature([Item, ItemWorkLog, Consignment, Appraisal, Order, PhotoAudit, ItemReview])],
   controllers: [ItemController],
 })
 export class ItemModule {}

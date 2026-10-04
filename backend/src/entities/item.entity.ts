@@ -82,6 +82,21 @@ export class Item {
   @Column({ type: 'timestamptz', nullable: true })
   listedAt: Date | null;
 
+  /** 色差评价均分（1-5，买家评价与客服认定共同沉淀，5 为颜色一致），无评价则空 */
+  @Column({ type: 'numeric', precision: 3, scale: 2, nullable: true })
+  colorAvgScore: string | null;
+
+  @Column({ type: 'int', default: 0 })
+  colorReviewCount: number;
+
+  /** 退货回库二次上架时，记录原始订单 id（结算/追溯用） */
+  @Column({ type: 'uuid', nullable: true })
+  resaleOfOrderId: string | null;
+
+  /** 退货回库后二次上架的重新入仓时间（二次销售仓储费从此起算） */
+  @Column({ type: 'timestamptz', nullable: true })
+  lastRestockAt: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 }

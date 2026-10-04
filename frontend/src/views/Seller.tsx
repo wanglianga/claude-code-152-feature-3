@@ -219,6 +219,8 @@ export function MySettlements({ list }: { list: any[] }) {
   }, []);
 
   const settled = orders.filter((o) => settlements[o.id]);
+  // 售后退货成立但家具尚未回库评估 → 卖家结算暂缓至新处理结果确认
+  const held = orders.filter((o) => !settlements[o.id] && o.status === 'RETURNING');
 
   return (
     <div>
@@ -228,8 +230,30 @@ export function MySettlements({ list }: { list: any[] }) {
           <div className="sub">成交价、佣金、翻新费、仓储费、配送费与售后赔付均逐项列明来源</div>
         </div>
       </div>
+      {held.length > 0 && (
+        <div className="card" style={{ borderColor: '#fcd34d', marginBottom: 14 }}>
+          <h3 style={{ fontSize: 15 }}>⏳ 结算暂缓中的订单</h3>
+          <table>
+            <tbody>
+              {held.map((o) => (
+                <tr key={o.id}>
+                  <td style={{ width: 150 }}><b>订单 {o.code}</b></td>
+                  <td>
+                    {o.status === 'RETURNING'
+                      ? '售后退货已成立，家具回库后仓库正在重新评估残值、回库仓储费与是否可二次上架；新处理结果确认后再结算。'
+                      : '该订单存在处理中的售后工单，客服裁定确认后再生成结算单。'}
+                  </td>
+                  <td style={{ textAlign: 'right' }}>
+                    <span className="badge amber">{o.status === 'RETURNING' ? '退货回库评估中' : '售后处理中'}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       {settled.length === 0 ? (
-        <Empty text="暂无已结算订单" />
+        <Empty text={held.length ? '暂无已结算订单，上方订单结算暂缓中' : '暂无已结算订单'} />
       ) : (
         <div className="grid">
           {settled.map((o) => {

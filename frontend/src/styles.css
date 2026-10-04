@@ -187,6 +187,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--brand-soft)
 .price { font-weight: 700; color: #b45309; }
 .muted { color: var(--ink-3); }
 .tag { font-size: 11.5px; padding: 1px 7px; border-radius: 6px; background: #f1f5f9; color: var(--ink-2); margin-right: 4px; }
+.tag-warn { background: #fee2e2; color: #b91c1c; font-weight: 600; }
 .money-in { color: var(--green); font-weight: 600; }
 .money-out { color: var(--red); font-weight: 600; }
 .section-title { font-size: 14px; font-weight: 700; margin: 18px 0 9px; color: var(--ink); }

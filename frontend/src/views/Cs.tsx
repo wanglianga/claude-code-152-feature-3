@@ -142,6 +142,8 @@ function SettlementList() {
                         <button className="btn ghost sm" onClick={() => setOpenId(o.id)}>查看明细</button>
                       ) : ['DELIVERED', 'RETURNED'].includes(o.status) ? (
                         <button className="btn sm" onClick={() => settle(o.id)}>生成结算单</button>
+                      ) : o.status === 'RETURNING' ? (
+                        <span className="badge amber" title="售后退货已成立，家具回库评估残值/仓储费/二次上架后，卖家结算解除暂缓">退货回库评估中·结算暂缓</span>
                       ) : (
                         <span className="muted">未到结算节点</span>
                       )}

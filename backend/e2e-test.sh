@@ -38,6 +38,9 @@ echo "== [3] 估价师预约上门 + 上门验真评分与报价 =="
 curl -s -o /dev/null -X POST $BASE/appraisals/consignment/$CN_ID/schedule -H "Authorization: Bearer $T_APPR" 2>/dev/null
 # schedule 端点挂在 consignments 模块
 curl -s -o /dev/null -X POST $BASE/consignments/$CN_ID/schedule -H "Authorization: Bearer $T_APPR"
+# 底价高于寄卖价应被拒（在首次估价提交前触发价格校验）
+bad=$(curl -s -X POST $BASE/appraisals/consignment/$CN_ID -H "Authorization: Bearer $T_APPR" -H 'Content-Type: application/json' -d '{"structuralScore":1,"stainScore":1,"odorScore":1,"mothScore":1,"warpScore":1,"moveDifficulty":1,"consignmentPrice":100,"minDealPrice":200,"matchResult":"MATCH"}' | jq -r '.message')
+echo "$bad" | grep -q '最低成交价' && ok "底价高于寄卖价被业务规则拦截"
 sc=$(curl -s -X POST $BASE/appraisals/consignment/$CN_ID -H "Authorization: Bearer $T_APPR" -H 'Content-Type: application/json' -d '{
   "structuralScore":2,"stainScore":2,"odorScore":1,"mothScore":1,"warpScore":1,"moveDifficulty":3,
   "consignmentPrice":820,"minDealPrice":650,"commissionRate":0.15,"estimatedRefurbishCost":100,
@@ -46,9 +49,6 @@ sc=$(curl -s -X POST $BASE/appraisals/consignment/$CN_ID -H "Authorization: Bear
 ITEM_ID=$(echo "$sc" | jq -r '.item.id')
 APPR_ID=$(echo "$sc" | jq -r '.appraisal.id')
 [ -n "$ITEM_ID" ] && [ "$ITEM_ID" != "null" ] && ok "估价完成并生成商品 PREPARING（寄卖价820/底价650/佣金15%）"
-# 底价高于寄卖价应被拒
-bad=$(curl -s -X POST $BASE/appraisals/consignment/$CN_ID -H "Authorization: Bearer $T_APPR" -H 'Content-Type: application/json' -d '{"structuralScore":1,"stainScore":1,"odorScore":1,"mothScore":1,"warpScore":1,"moveDifficulty":1,"consignmentPrice":100,"minDealPrice":200,"matchResult":"MATCH"}' | jq -r '.message')
-echo "$bad" | grep -q '最低成交价' && ok "底价高于寄卖价被业务规则拦截"
 
 echo "== [4] 仓库入库/清洁/补漆作业（作业即记账） =="
 curl -s -o /dev/null -X POST $BASE/items/$ITEM_ID/work-logs -H "Authorization: Bearer $T_REF" -H 'Content-Type: application/json' -d '{"type":"CLEANING","note":"蒸汽清洁","cost":55}'
@@ -79,13 +79,25 @@ curl -s -o /dev/null -X POST $BASE/deliveries/$ORD_ID/load -H "Authorization: Be
 dn=$(curl -s -X POST $BASE/deliveries/$ORD_ID/done -H "Authorization: Bearer $T_DEL" -H 'Content-Type: application/json' -d '{"note":"买家在场，正常签收"}')
 check "$(echo "$dn" | jq -r '.order.status')" "DELIVERED" "送达后订单 DELIVERED"
 
-echo "== [8] 售后协同工单（色差）+ 客服裁定平台赔付 =="
+echo "== [8] 售后协同工单（色差）+ 客服认定页面不准确、平台赔付 =="
 tk=$(curl -s -X POST $BASE/tickets -H "Authorization: Bearer $T_BUYER" -H 'Content-Type: application/json' -d "{
-  \"orderId\":\"$ORD_ID\",\"type\":\"COLOR_DIFFERENCE\",\"title\":\"到货颜色比照片深\",\"description\":\"买家认为色差明显要求补偿\"}")
+  \"orderId\":\"$ORD_ID\",\"type\":\"COLOR_DIFFERENCE\",\"title\":\"到货颜色比照片深\",
+  \"description\":\"买家认为色差明显要求补偿\",\"buyerPhotos\":[\"http://x/on-site-1.jpg\"]}")
 TK_ID=$(echo "$tk" | jq -r '.ticket.id // .id')
 curl -s -o /dev/null -X POST $BASE/tickets/$TK_ID/messages -H "Authorization: Bearer $T_WH" -H 'Content-Type: application/json' -d '{"content":"仓库核对拍照光线，建议补偿 30 元色差价"}'
-rv=$(curl -s -X POST $BASE/tickets/$TK_ID/resolve -H "Authorization: Bearer $T_CS" -H 'Content-Type: application/json' -d '{"resolution":"PLATFORM_COMPENSATE","liableParty":"PLATFORM","compensationAmount":30,"note":"平台承担 30 元色差补偿"}')
-check "$(echo "$rv" | jq -r '.ticket.status')" "RESOLVED" "客服裁定工单 RESOLVED，平台赔付 30"
+# 色差工单未给认定应被拦截
+bad=$(curl -s -X POST $BASE/tickets/$TK_ID/resolve -H "Authorization: Bearer $T_CS" -H 'Content-Type: application/json' -d '{"resolution":"PLATFORM_COMPENSATE","liableParty":"PLATFORM","compensationAmount":30}' | jq -r '.message')
+echo "$bad" | grep -q '色差争议必须给出认定' && ok "色差工单未给认定被拦截"
+# 认定自然光差异却要求退货，应被拦截（必须维持交易）
+bad2=$(curl -s -X POST $BASE/tickets/$TK_ID/resolve -H "Authorization: Bearer $T_CS" -H 'Content-Type: application/json' -d '{"resolution":"RETURN_REFUND","liableParty":"BUYER","colorFinding":"NATURAL_LIGHT"}' | jq -r '.message')
+echo "$bad2" | grep -q '自然光差异' && ok "自然光差异认定必须维持交易（不能退货）"
+# 仓库可登记摄影档案（灯光/原图/修图/页面提示）
+curl -s -o /dev/null -X POST $BASE/items/$ITEM_ID/photo-audit -H "Authorization: Bearer $T_WH" -H 'Content-Type: application/json' -d '{"lightingSetup":"5500K灯箱","cameraSetup":"白平衡5300K灰卡校准","rawPhotos":["http://x/raw.jpg"],"editedPhotos":["http://x/bed1.jpg"],"retouchNote":"仅曝光+0.2","colorNoticeOnPage":true,"colorNoticeText":"不同光源颜色略有差异","colorReference":"NCS S4010"}'
+rv=$(curl -s -X POST $BASE/tickets/$TK_ID/resolve -H "Authorization: Bearer $T_CS" -H 'Content-Type: application/json' -d '{"resolution":"PLATFORM_COMPENSATE","liableParty":"PLATFORM","compensationAmount":30,"colorFinding":"LISTING_INACCURATE","colorScore":2,"findingBasis":"原图偏深、修图超规范、页面未写材质色号","note":"平台承担 30 元色差补偿"}')
+check "$(echo "$rv" | jq -r '.ticket.status')" "RESOLVED" "客服认定页面描述不准确，平台赔付 30，工单 RESOLVED"
+check "$(echo "$rv" | jq -r '.ticket.colorFinding')" "LISTING_INACCURATE" "工单记录认定结论 LISTING_INACCURATE"
+echo "$rv" | jq -e '[.reviews[] | select(.source=="CS" and .colorScore==2)] | length == 1' >/dev/null && ok "认定沉淀为商品色差评价（CS 2/5）"
+echo "$rv" | jq -r '.messages[-1].content' | grep -q '摄影规范' && ok "协同记录写明触发摄影规范整改"
 
 echo "== [9] 结算单（逐项来源） =="
 st=$(curl -s -X POST $BASE/settlements/order/$ORD_ID/generate -H "Authorization: Bearer $T_CS")
@@ -117,6 +129,84 @@ cancelid=$(echo "$rresp" | jq -r '.consignment.id')
 curl -s -o /dev/null -X POST $BASE/consignments/$cancelid/cancel -H "Authorization: Bearer $T_RISK" -H 'Content-Type: application/json' -d '{"reason":"e2e 测试反悔"}'
 pf=$(curl -s $BASE/analytics/seller-profiles -H "Authorization: Bearer $T_OPS" | jq -r '.[] | select(.username=="linfan") | .backtrackCount')
 check "$pf" "2" "反悔次数累加到 2（画像联动）"
+
+echo "== [13] 色差退货成立 → 结算暂缓 → 回库评估残值/仓储费 → 二次上架 =="
+# 卖家再寄卖一件书柜，走完上架→下单→送达→色差退货全链路
+RESP2=$(curl -s -X POST $BASE/consignments -H "Authorization: Bearer $T_SELLER" -H 'Content-Type: application/json' -d '{
+  "category":"BOOKCASE","brand":"e2e书柜","sizeText":"90x35x180 cm","material":"白橡木","yearsUsed":1,
+  "disassemblable":true,"floor":6,"elevator":"ELEVATOR","expectedPrice":500,"acceptRefurbish":true,"address":"测试小区"}')
+CN2=$(echo "$RESP2" | jq -r '.consignment.id')
+curl -s -o /dev/null -X POST $BASE/consignments/$CN2/schedule -H "Authorization: Bearer $T_APPR"
+sc2=$(curl -s -X POST $BASE/appraisals/consignment/$CN2 -H "Authorization: Bearer $T_APPR" -H 'Content-Type: application/json' -d '{
+  "structuralScore":1,"stainScore":1,"odorScore":1,"mothScore":1,"warpScore":1,"moveDifficulty":2,
+  "consignmentPrice":460,"minDealPrice":360,"commissionRate":0.15,"estimatedRefurbishCost":40,
+  "cleaningAdvice":"擦拭","refurbishSuggestions":"无","matchResult":"MATCH",
+  "decision":"ACCEPT","location":"WAREHOUSE","deliveryRadiusKm":20}')
+IT2=$(echo "$sc2" | jq -r '.item.id')
+curl -s -o /dev/null -X POST $BASE/items/$IT2/work-logs -H "Authorization: Bearer $T_REF" -H 'Content-Type: application/json' -d '{"type":"CLEANING","note":"清洁","cost":40}'
+curl -s -o /dev/null -X POST $BASE/items/$IT2/work-logs -H "Authorization: Bearer $T_WH" -H 'Content-Type: application/json' -d '{"type":"STORAGE","note":"E-01-01","cost":0}'
+curl -s -o /dev/null -X POST $BASE/items/$IT2/advance -H "Authorization: Bearer $T_WH" -H 'Content-Type: application/json' -d '{"to":"PHOTOGRAPHY"}'
+curl -s -o /dev/null -X POST $BASE/items/$IT2/advance -H "Authorization: Bearer $T_WH" -H 'Content-Type: application/json' -d '{"to":"LISTED","description":"e2e 书柜（页面未做色差提示）","photos":["http://x/shelf.jpg"],"deliveryRadiusKm":20}'
+ord2=$(curl -s -X POST $BASE/orders -H "Authorization: Bearer $T_BUYER" -H 'Content-Type: application/json' -d "{
+  \"itemId\":\"$IT2\",\"buyerAddress\":\"买家地址\",\"buyerFloor\":3,\"buyerElevator\":\"ELEVATOR\",
+  \"appointmentWindow\":\"后天下午\"}")
+O2=$(echo "$ord2" | jq -r '.order.id')
+curl -s -o /dev/null -X POST $BASE/deliveries/$O2/schedule -H "Authorization: Bearer $T_DEL" -H 'Content-Type: application/json' -d '{"vehicleType":"SMALL_VAN","scheduledWindow":"10-06 上午"}'
+curl -s -o /dev/null -X POST $BASE/deliveries/$O2/load -H "Authorization: Bearer $T_DEL"
+curl -s -o /dev/null -X POST $BASE/deliveries/$O2/done -H "Authorization: Bearer $T_DEL" -H 'Content-Type: application/json' -d '{"note":"签收"}'
+tk2=$(curl -s -X POST $BASE/tickets -H "Authorization: Bearer $T_BUYER" -H 'Content-Type: application/json' -d "{
+  \"orderId\":\"$O2\",\"type\":\"COLOR_DIFFERENCE\",\"title\":\"书柜颜色与页面不符\",
+  \"description\":\"实物偏黄页面偏白\",\"buyerPhotos\":[\"http://x/site-1.jpg\"]}")
+TK2=$(echo "$tk2" | jq -r '.ticket.id')
+rv2=$(curl -s -X POST $BASE/tickets/$TK2/resolve -H "Authorization: Bearer $T_CS" -H 'Content-Type: application/json' -d '{
+  "resolution":"RETURN_REFUND","liableParty":"PLATFORM","compensationAmount":60,
+  "colorFinding":"LISTING_INACCURATE","colorScore":2,
+  "findingBasis":"页面未做色差提示且修图偏色","note":"平台承担退货退款与往返运费"}')
+check "$(echo "$rv2" | jq -r '.order.status')" "RETURNING" "色差退货成立后订单进入 RETURNING，卖家结算暂缓"
+# 回库评估前生成结算应被拒
+hold=$(curl -s -X POST $BASE/settlements/order/$O2/generate -H "Authorization: Bearer $T_CS" | jq -r '.message')
+echo "$hold" | grep -q '结算暂缓' && ok "回库评估前卖家结算暂缓被拦截"
+# 仓库回库评估：残值 380、回库仓储费 12、复检处理费 18，可二次上架
+as=$(curl -s -X POST $BASE/tickets/$TK2/return-assessment -H "Authorization: Bearer $T_WH" -H 'Content-Type: application/json' -d '{
+  "conditionNote":"复检无磕碰，可二次上架","checkPhotos":["http://x/check.jpg"],
+  "residualValue":380,"restockStorageFee":12,"restockHandlingFee":18,
+  "decision":"RE_LISTABLE","warehouseSlot":"E-02-02"}')
+check "$(echo "$as" | jq -r '.order.status')" "RETURNED" "回库评估确认后订单退货完结 RETURNED"
+check "$(echo "$as" | jq -r '.ticket.status')" "CLOSED" "回库评估后工单关闭 CLOSED"
+check "$(echo "$as" | jq -r '.returnAssessment.decision')" "RE_LISTABLE" "回库评估结论：可二次上架"
+# 退货结算：卖家应得 0，平台吸收清洁40+配送60+回库仓储12+复检18=130
+st2=$(curl -s -X POST $BASE/settlements/order/$O2/generate -H "Authorization: Bearer $T_CS")
+check "$(echo "$st2" | jq -r '.settlement.sellerPayout')" "0.00" "退货单卖家应得为 0"
+check "$(echo "$st2" | jq -r '.settlement.platformIncome')" "-130.00" "平台吸收 40+60+12+18=130（含回库评估费用）"
+echo "$st2" | jq -r '.entries[] | select(.type=="STORAGE_FEE") | .source' | grep -q '回库评估单' && ok "回库仓储费来源引用回库评估单"
+echo "$st2" | jq -r '.entries[].source' | grep -q '残值评估价 ¥380' && ok "结算来源写明残值评估价与二次上架说明"
+# 复检后二次上架：价格取残值，仓储周期自回库重新起算
+rl=$(curl -s -X POST $BASE/items/$IT2/advance -H "Authorization: Bearer $T_WH" -H 'Content-Type: application/json' -d '{"to":"LISTED","description":"书柜返仓复检二次上架","photos":["http://x/resale.jpg"],"deliveryRadiusKm":20,"listedPrice":380}')
+check "$(echo "$rl" | jq -r '.status')" "LISTED" "退货商品复检后重新上架 LISTED"
+check "$(echo "$rl" | jq -r '.listedPrice')" "380.00" "二次上架价取残值评估价 380"
+check "$(echo "$rl" | jq -r '.resaleOfOrderId')" "$O2" "商品记录追溯原退货订单"
+
+echo "== [14] 自然光差异认定：维持交易 + 保养建议（种子书柜工单） =="
+NAT_TK=$(curl -s $BASE/tickets -H "Authorization: Bearer $T_BUYER" | jq -r '[.[] | select(.type=="COLOR_DIFFERENCE" and .status=="OPEN")][0].id // empty')
+if [ -n "$NAT_TK" ]; then
+  nat=$(curl -s -X POST $BASE/tickets/$NAT_TK/resolve -H "Authorization: Bearer $T_CS" -H 'Content-Type: application/json' -d '{
+    "resolution":"KEEP_LISTING","liableParty":"BUYER","colorFinding":"NATURAL_LIGHT","colorScore":4,
+    "findingBasis":"5500K原图与色卡一致，买家3000K暖光下偏黄属光源差异，页面已提示"}')
+  check "$(echo "$nat" | jq -r '.ticket.colorFinding')" "NATURAL_LIGHT" "认定自然光差异 NATURAL_LIGHT"
+  echo "$nat" | jq -e '.ticket.careAdvice | length > 0' >/dev/null && ok "维持交易并附保养建议"
+  echo "$nat" | jq -r '.order.status' | grep -q 'DELIVERED' && ok "维持交易订单状态不变"
+else
+  echo "  · （种子自然光工单已处理，跳过；建议在空库重跑本脚本）"
+fi
+
+echo "== [15] 运营分析与摄影规范沉淀 =="
+ps_count=$(curl -s $BASE/photo-standards -H "Authorization: Bearer $T_OPS" | jq 'length')
+[ "${ps_count:-0}" -ge 2 ] && ok "页面描述不准确认定累计生成 ≥2 条摄影整改规范（当前 $ps_count）"
+an2=$(curl -s $BASE/analytics/by-category -H "Authorization: Bearer $T_OPS")
+echo "$an2" | jq -e '[.categories[] | select(.colorListingInaccurateCount > 0)] | length >= 1' >/dev/null && ok "品类分析含色差认定统计（描述不准确）"
+echo "$an2" | jq -r '.categories[] | select(.colorListingInaccurateCount>0) | .colorAdvice' | grep -q '摄影' && ok "色差认定影响品类摄影整改建议"
+cr=$(curl -s $BASE/analytics/color-reviews -H "Authorization: Bearer $T_OPS")
+echo "$cr" | jq -e 'length >= 1' >/dev/null && ok "色差评价总览可查（商品评价受认定影响）"
 
 echo
 echo "结果：PASS=$PASS FAIL=$FAIL"

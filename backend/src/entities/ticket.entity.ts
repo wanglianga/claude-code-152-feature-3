@@ -41,6 +41,18 @@ export type TicketResolution =
   | 'RE_LIST'
   | 'CANCEL_CONSIGNMENT';
 
+/**
+ * 色差认定结论（仅色差类工单）：
+ * LISTING_INACCURATE 页面描述/照片不准确 → 平台承担退换或补偿
+ * NATURAL_LIGHT 自然光差异且页面已提示 → 维持交易，提供保养建议
+ * INCONCLUSIVE 证据不足，需继续协同
+ */
+export type ColorFinding =
+  | 'NONE'
+  | 'LISTING_INACCURATE'
+  | 'NATURAL_LIGHT'
+  | 'INCONCLUSIVE';
+
 @Entity('tickets')
 export class Ticket {
   @PrimaryGeneratedColumn('uuid')
@@ -85,6 +97,26 @@ export class Ticket {
 
   @Column({ type: 'text' })
   description: string;
+
+  /** 买家收货现场照片（色差/磕碰异议举证） */
+  @Column({ type: 'jsonb', default: () => "'[]'" })
+  buyerPhotos: string[];
+
+  /** 色差认定结论（仅色差类工单，默认 NONE） */
+  @Column({ type: 'varchar', length: 24, default: 'NONE' })
+  colorFinding: ColorFinding;
+
+  /** 色差一致性评分 1-5（客服认定时记录，5 为一致），无则空 */
+  @Column({ type: 'int', nullable: true })
+  colorScore: number | null;
+
+  /** 维持交易时提供给买家的保养/使用建议 */
+  @Column({ type: 'text', default: '' })
+  careAdvice: string;
+
+  /** 认定依据摘要：灯光/原图/修图记录/现场照片/页面描述的核对结论 */
+  @Column({ type: 'text', default: '' })
+  findingBasis: string;
 
   @CreateDateColumn()
   createdAt: Date;

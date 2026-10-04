@@ -9,6 +9,7 @@ import { Delivery } from '../entities/delivery.entity';
 import { Ticket } from '../entities/ticket.entity';
 import { SellerProfile } from '../entities/seller-profile.entity';
 import { User } from '../entities/user.entity';
+import { ItemReview, PhotoStandard } from '../entities/photo-audit.entity';
 import { JwtAuthGuard } from '../auth/jwt.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 
@@ -39,7 +40,6 @@ export class AnalyticsController {
     const orders = await this.ds.getRepository(Order).find();
     const deliveries = await this.ds.getRepository(Delivery).find();
     const tickets = await this.ds.getRepository(Ticket).find();
-
     const itemMap = new Map(items.map((i) => [i.id, i]));
     const orderById = new Map(orders.map((o) => [o.id, o]));
 
@@ -105,6 +105,27 @@ export class AnalyticsController {
           returnReasons[t.type] = (returnReasons[t.type] || 0) + 1;
         });
 
+      // 色差争议认定：页面描述不准确 vs 自然光差异；并汇总该品类色差评价均分
+      const colorTickets = catTickets.filter((t) => t.type === 'COLOR_DIFFERENCE');
+      const colorInaccurate = colorTickets.filter(
+        (t) => t.colorFinding === 'LISTING_INACCURATE',
+      ).length;
+      const colorNaturalLight = colorTickets.filter(
+        (t) => t.colorFinding === 'NATURAL_LIGHT',
+      ).length;
+      const colorScores = catItems
+        .filter((i) => i.colorAvgScore != null)
+        .map((i) => Number(i.colorAvgScore));
+      const avgColorScore = colorScores.length
+        ? Math.round(
+            (colorScores.reduce((a, b) => a + b, 0) / colorScores.length) * 10,
+          ) / 10
+        : null;
+      const colorReviewCount = catItems.reduce(
+        (s, i) => s + (i.colorReviewCount || 0),
+        0,
+      );
+
       // 配送失败率
       const failed = catDeliveries.filter((d) => d.status === 'FAILED');
       const failRate = catDeliveries.length
@@ -133,6 +154,14 @@ export class AnalyticsController {
         channelAdvice = '可入仓但需控制翻新预算，按单评估配送范围';
       }
 
+      // 色差提示：该品类出现页面描述不准确认定 → 要求摄影规范整改
+      const colorAdvice =
+        colorInaccurate > 0
+          ? `出现 ${colorInaccurate} 次页面颜色呈现不准确认定，已生成摄影整改规范，后续该品类拍摄须色卡校准+双光源原图留档`
+          : colorNaturalLight > 0
+            ? `色差争议均认定为自然光差异（${colorNaturalLight} 次），维持现有页面色差提示与保养话术即可`
+            : '暂无色差争议记录';
+
       return {
         category,
         categoryLabel: CATEGORY_LABELS[category],
@@ -149,11 +178,50 @@ export class AnalyticsController {
         deliveryFailed: failed.length,
         deliveryFailRatePct: failRate,
         deliveryFailReasons: failReasons,
+        colorDisputeCount: colorTickets.length,
+        colorListingInaccurateCount: colorInaccurate,
+        colorNaturalLightCount: colorNaturalLight,
+        colorReviewCount,
+        avgColorScore,
+        colorAdvice,
         channelAdvice,
       }
     });
 
     return { categories: result, generatedAt: new Date() };
+  }
+
+  /** 摄影规范列表（色差认定沉淀，供运营/仓库/摄影执行） */
+  @Roles('OPS', 'ADMIN', 'CS', 'WAREHOUSE', 'REFURBISHER', 'APPRAISER')
+  @Get('photo-standards')
+  async photoStandards() {
+    return this.ds.getRepository(PhotoStandard).find({
+      where: { status: 'ACTIVE' },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  /** 色差评价总览：按商品聚合颜色一致性评分 */
+  @Roles('OPS', 'ADMIN', 'CS')
+  @Get('color-reviews')
+  async colorReviews() {
+    const items = await this.ds.getRepository(Item).find({
+      order: { createdAt: 'DESC' },
+    });
+    const reviews = await this.ds.getRepository(ItemReview).find({
+      order: { createdAt: 'DESC' },
+    });
+    return items
+      .filter((i) => i.colorReviewCount > 0)
+      .map((i) => ({
+        itemId: i.id,
+        title: i.title,
+        category: i.category,
+        categoryLabel: CATEGORY_LABELS[i.category] || i.category,
+        colorAvgScore: i.colorAvgScore,
+        colorReviewCount: i.colorReviewCount,
+        latestReviews: reviews.filter((r) => r.itemId === i.id).slice(0, 5),
+      }));
   }
 
   @Roles('OPS', 'ADMIN', 'CS', 'APPRAISER')
@@ -206,6 +274,8 @@ export class AnalyticsController {
       Ticket,
       SellerProfile,
       User,
+      ItemReview,
+      PhotoStandard,
     ]),
   ],
   controllers: [AnalyticsController],
