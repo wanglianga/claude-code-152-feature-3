@@ -92,11 +92,16 @@ export class SeederService {
       m.create(Item, {
         consignmentId: sofaConsignment.id, category: 'SOFA',
         title: '顾家家居 三人位真皮沙发 可拆洗',
-        description: '头层牛皮，使用 3 年；已完成深度清洁与扶手补色，结构稳固无异味。电梯房，可拆装，配送范围 30km。',
+        description: '头层牛皮，使用 3 年；已完成深度清洁与扶手补色，结构稳固无异味。电梯房，可拆装，配送范围 30km。\n【色差提示】皮革在自然光与暖光下色调略有差异，以实物为准。',
         status: 'LISTED', location: 'WAREHOUSE', warehouseSlot: 'A-03-12',
         deliveryRadiusKm: 30, listedPrice: '980.00', minDealPrice: '800.00',
         cleaningCost: '60.00', refurbishCost: '80.00',
         photos: ['seed://item/sofa-1.jpg', 'seed://item/sofa-2.jpg'],
+        shootLighting: '自然光 上午10点 北向窗 + 反光板补光',
+        rawPhotos: ['seed://raw/sofa-raw-1.jpg', 'seed://raw/sofa-raw-2.jpg'],
+        retouchNote: '仅校正白平衡与曝光，未调整饱和度',
+        colorNotice: true, listedColor: '深咖色（暖调牛皮）',
+        reviewStatus: 'NEUTRAL', photoStandardFlag: 'OK',
         enteredWarehouseAt: daysAgo(12), listedAt: daysAgo(4),
       }),
     );
@@ -202,6 +207,12 @@ export class SeederService {
         status: 'RETURNED', location: 'WAREHOUSE', warehouseSlot: 'A-05-01',
         deliveryRadiusKm: 20, listedPrice: '760.00', minDealPrice: '600.00',
         cleaningCost: '50.00', refurbishCost: '120.00',
+        shootLighting: '自然光 上午9点 库房门口', rawPhotos: ['seed://raw/sofa2-raw-1.jpg'],
+        retouchNote: '无', colorNotice: true, listedColor: '浅灰色',
+        reviewStatus: 'NEUTRAL', photoStandardFlag: 'OK',
+        residualValue: '600.00', returnStorageFee: '40.00', relistEligible: true,
+        returnInspectionNote: '包装完整无磕碰，布套已重新拆洗，按原价 8 折评估残值，可补充通道尺寸后二次上架',
+        returnedAt: daysAgo(3),
         enteredWarehouseAt: daysAgo(9), listedAt: daysAgo(6),
       }),
     );
@@ -338,12 +349,180 @@ export class SeederService {
       m.create(Item, {
         consignmentId: bookC.id, category: 'BOOKCASE',
         title: '宜家 BILLY 书柜 80cm 白色',
-        description: '可拆装，层板完好，无明显划痕。仅支持同城自提或短途配送 10km。',
+        description: '可拆装，层板完好，无明显划痕。仅支持同城自提或短途配送 10km。\n【色差提示】白色贴膜在暖光灯下可能偏米白，自然光下为标准白色。',
         status: 'LISTED', location: 'WAREHOUSE', warehouseSlot: 'C-02-08',
         deliveryRadiusKm: 10, listedPrice: '150.00', minDealPrice: '100.00',
+        photos: ['seed://item/billy-1.jpg'],
+        shootLighting: '影室闪光灯 5500K，白背景',
+        rawPhotos: ['seed://raw/billy-raw-1.jpg'],
+        retouchNote: '未修图，仅裁剪',
+        colorNotice: true, listedColor: '标准白',
+        reviewStatus: 'NEUTRAL', photoStandardFlag: 'OK',
         enteredWarehouseAt: daysAgo(3), listedAt: daysAgo(1),
       }),
     );
+
+    // ---------- 样例 6：书柜色差（页面描述不准确）→ 平台承担退货，家具取回中、卖家结算暂缓 ----------
+    const book6C = await m.save(
+      m.create(Consignment, {
+        code: 'CN202600008', sellerId: byName['wangjiayi'].id,
+        category: 'BOOKCASE', brand: '源氏木语', sizeText: '100x35x180 cm',
+        material: '白橡木贴面', yearsUsed: 2, defectPhotos: [],
+        disassemblable: true, floor: 3, elevator: 'ELEVATOR',
+        expectedPrice: '900.00', acceptRefurbish: true,
+        address: '和平小区 3 栋 602', status: 'LISTED', verificationLevel: 'NORMAL',
+      }),
+    );
+    await m.save(
+      m.create(Appraisal, {
+        consignmentId: book6C.id, appraiserId: byName['gujia'].id,
+        structuralScore: 2, stainScore: 1, odorScore: 1, mothScore: 1, warpScore: 2,
+        moveDifficulty: 2, consignmentPrice: '680.00', minDealPrice: '520.00',
+        commissionRate: '0.1500', estimatedRefurbishCost: '40.00',
+        cleaningAdvice: '擦拭即可', refurbishSuggestions: '无', matchResult: 'MATCH',
+      }),
+    );
+    const book6Item = await m.save(
+      m.create(Item, {
+        consignmentId: book6C.id, category: 'BOOKCASE',
+        title: '源氏木语 1m 橡木书柜（页面标「浅原木色」）',
+        description: '页面标注浅原木色，照片明亮偏白。可拆装，层板可调。',
+        status: 'RETURNING', location: 'WAREHOUSE', warehouseSlot: 'C-03-02',
+        deliveryRadiusKm: 20, listedPrice: '680.00', minDealPrice: '520.00',
+        cleaningCost: '30.00', refurbishCost: '20.00',
+        photos: ['seed://item/oak-case-1.jpg'],
+        shootLighting: '暖光摄影灯 3200K（页面成片明显偏亮偏白）',
+        rawPhotos: ['seed://raw/oak-case-raw-1.jpg'],
+        retouchNote: '提高曝光 +0.7、饱和度 -15，原木深色纹理被淡化',
+        colorNotice: false, listedColor: '浅原木色（偏白）',
+        reviewStatus: 'BAD',
+        reviewNote: '色差成立：实物为偏深橡木色，页面暖光拍摄并过度调色，且未提示色差',
+        photoStandardFlag: 'NEEDS_REMEDY',
+        photoRemedyNote: '标准自然光（北向窗上午）下重新拍摄并保留原图，禁止降低饱和度；页面颜色改为「橡木本色（偏深）」，显著标注不同光线下色差提示',
+        relistEligible: true,
+        enteredWarehouseAt: daysAgo(8), listedAt: daysAgo(6),
+      }),
+    );
+    const book6Order = await m.save(
+      m.create(Order, {
+        code: 'OD2026000003', itemId: book6Item.id, consignmentId: book6C.id,
+        buyerId: byName['zhangmai'].id, sellerId: byName['wangjiayi'].id,
+        dealPrice: '680.00', deliveryFee: '60.00',
+        buyerAddress: '幸福里 2 栋 501', buyerFloor: 5, buyerElevator: 'ELEVATOR',
+        status: 'RETURNING', settlementHold: true,
+        settlementHoldReason: '色差售后退货成立：等待家具回库残值评估、仓储费核算与二次上架结论，卖家结算暂缓',
+        deliveryNote: '买家反馈实物颜色比页面深两个色号', createdAt: daysAgo(2),
+      }),
+    );
+    await m.save(
+      m.create(Delivery, {
+        orderId: book6Order.id, teamId: byName['peisong'].id,
+        vehicleType: 'SMALL_VAN', needsDisassembly: true,
+        pickupFloor: 3, pickupElevator: 'ELEVATOR',
+        dropoffFloor: 5, dropoffElevator: 'ELEVATOR',
+        scheduledWindow: '2026-10-01 上午', status: 'DONE',
+        createdAt: daysAgo(3),
+      }),
+    );
+    const book6Ticket = await m.save(
+      m.create(Ticket, {
+        consignmentId: book6C.id, itemId: book6Item.id, orderId: book6Order.id,
+        type: 'COLOR_DIFFERENCE', createdBy: byName['zhangmai'].id, creatorRole: 'BUYER',
+        status: 'RESOLVED', resolution: 'RETURN_REFUND', liableParty: 'PLATFORM',
+        compensationAmount: '60.00', colorFinding: 'LISTING_INACCURATE',
+        careAdvice: '退货包装请保留原泡沫护角，返程搬运已安排。',
+        title: '书柜实物颜色比页面照片深，认为描述不符',
+        description: '页面为浅原木偏白色，实物为偏深橡木色，买家家中自然光下对比仍差异明显，要求退货退款并承担返程搬运费。',
+        buyerPhotos: ['seed://buyer/bookcase-livingroom-1.jpg', 'seed://buyer/bookcase-livingroom-2.jpg'],
+        buyerLighting: 'NATURAL_DAYLIGHT',
+        buyerSceneNote: '书柜放在南向客厅，上午自然光拍摄，旁边是白色电视柜，对比明显偏深',
+        createdAt: daysAgo(2),
+      }),
+    );
+    await m.save(TicketMessage, [
+      m.create(TicketMessage, { ticketId: book6Ticket.id, authorId: byName['zhangmai'].id, authorRole: 'BUYER', authorName: '买家张女士', content: '收到当天自然光下拍的，颜色和页面差很多，申请退货。', createdAt: daysAgo(2) }),
+      m.create(TicketMessage, { ticketId: book6Ticket.id, authorId: byName['cangguan'].id, authorRole: 'WAREHOUSE', authorName: '仓库管理员阿海', content: '已调取原图：拍摄用了 3200K 暖光灯且修图降饱和提曝光，页面也没挂色差提示。', createdAt: daysAgo(2) }),
+      m.create(TicketMessage, { ticketId: book6Ticket.id, authorId: byName['kefu'].id, authorRole: 'CS', authorName: '客服小陈', content: '【处理结论】色差裁定原因：页面描述不准确；平台承担退货退款并补偿 60 元返程搬运费，卖家结算暂缓至回库复检完成，商品按摄影规范整改后才能二次上架。', createdAt: daysAgo(1) }),
+    ]);
+
+    // ---------- 样例 7：书柜色差（自然光差异且页面已提示）→ 维持交易 + 保养建议 ----------
+    const book7C = await m.save(
+      m.create(Consignment, {
+        code: 'CN202600009', sellerId: byName['liujing'].id,
+        category: 'BOOKCASE', brand: '宜家 PAX 配件柜', sizeText: '75x40x200 cm',
+        material: '刨花板贴膜', yearsUsed: 1, defectPhotos: [],
+        disassemblable: true, floor: 3, elevator: 'ELEVATOR',
+        expectedPrice: '260.00', acceptRefurbish: false,
+        address: '科技园公寓', status: 'LISTED', verificationLevel: 'NORMAL',
+      }),
+    );
+    await m.save(
+      m.create(Appraisal, {
+        consignmentId: book7C.id, appraiserId: byName['gujia'].id,
+        structuralScore: 1, stainScore: 1, odorScore: 1, mothScore: 1, warpScore: 1,
+        moveDifficulty: 2, consignmentPrice: '220.00', minDealPrice: '160.00',
+        commissionRate: '0.1500', estimatedRefurbishCost: '0',
+        cleaningAdvice: '擦拭即可', refurbishSuggestions: '无', matchResult: 'MATCH',
+      }),
+    );
+    const book7Item = await m.save(
+      m.create(Item, {
+        consignmentId: book7C.id, category: 'BOOKCASE',
+        title: '宜家窄边书柜 暖白色（已标注色差提示）',
+        description: '暖白色贴膜，九成新，无磕碰。\n【色差提示】暖光灯下偏米黄、自然光下偏白，属正常光线差异。',
+        status: 'DELIVERED', location: 'WAREHOUSE', warehouseSlot: 'C-04-01',
+        deliveryRadiusKm: 15, listedPrice: '220.00', minDealPrice: '160.00',
+        photos: ['seed://item/pax-1.jpg'],
+        shootLighting: '自然光 下午3点 东向窗',
+        rawPhotos: ['seed://raw/pax-raw-1.jpg'],
+        retouchNote: '无',
+        colorNotice: true, listedColor: '暖白色',
+        reviewStatus: 'GOOD',
+        reviewNote: '买家认可：自然光差异，页面已有色差提示',
+        photoStandardFlag: 'OK',
+        enteredWarehouseAt: daysAgo(6), listedAt: daysAgo(5),
+      }),
+    );
+    const book7Order = await m.save(
+      m.create(Order, {
+        code: 'OD2026000004', itemId: book7Item.id, consignmentId: book7C.id,
+        buyerId: byName['sunmai'].id, sellerId: byName['liujing'].id,
+        dealPrice: '220.00', deliveryFee: '60.00',
+        buyerAddress: '梧桐苑 7 栋 902', buyerFloor: 9, buyerElevator: 'ELEVATOR',
+        status: 'DELIVERED',
+        deliveryNote: '签收后反馈晚上看偏黄', createdAt: daysAgo(1),
+      }),
+    );
+    await m.save(
+      m.create(Delivery, {
+        orderId: book7Order.id, teamId: byName['peisong'].id,
+        vehicleType: 'SMALL_VAN', needsDisassembly: true,
+        pickupFloor: 3, pickupElevator: 'ELEVATOR',
+        dropoffFloor: 9, dropoffElevator: 'ELEVATOR',
+        scheduledWindow: '2026-10-02 下午', status: 'DONE',
+        createdAt: daysAgo(2),
+      }),
+    );
+    const book7Ticket = await m.save(
+      m.create(Ticket, {
+        consignmentId: book7C.id, itemId: book7Item.id, orderId: book7Order.id,
+        type: 'COLOR_DIFFERENCE', createdBy: byName['sunmai'].id, creatorRole: 'BUYER',
+        status: 'RESOLVED', resolution: 'KEEP_LISTING', liableParty: 'NONE',
+        compensationAmount: '0', colorFinding: 'NATURAL_VARIATION',
+        careAdvice: '暖白色贴膜在暖光灯下偏米黄属正常现象：白天自然光下即偏白；避免紧贴暖色射灯摆放，日常用微湿软布顺纹理擦拭，避免阳光长时间直射可延缓黄变。',
+        title: '书柜晚上看比照片黄，怀疑色差',
+        description: '买家晚上在客厅暖光灯下觉得书柜偏黄，与页面照片不一致。',
+        buyerPhotos: ['seed://buyer/bookcase-warmlight-1.jpg'],
+        buyerLighting: 'INDOOR_WARM',
+        buyerSceneNote: '晚上客厅 3000K 暖光筒灯下拍摄',
+        createdAt: daysAgo(1),
+      }),
+    );
+    await m.save(TicketMessage, [
+      m.create(TicketMessage, { ticketId: book7Ticket.id, authorId: byName['sunmai'].id, authorRole: 'BUYER', authorName: '买家孙先生', content: '晚上看挺黄的，和页面不一样。', createdAt: daysAgo(1) }),
+      m.create(TicketMessage, { ticketId: book7Ticket.id, authorId: byName['cangguan'].id, authorRole: 'WAREHOUSE', authorName: '仓库管理员阿海', content: '比对原图：页面为自然光拍摄无修图，商品页已标注暖光灯下偏米黄，买家照片是 3000K 暖光环境。', createdAt: daysAgo(1) }),
+      m.create(TicketMessage, { ticketId: book7Ticket.id, authorId: byName['kefu'].id, authorRole: 'CS', authorName: '客服小陈', content: '【处理结论】色差裁定原因：自然光/灯光差异（页面已提示）；交易维持，已向买家发送摆放与保养建议。', createdAt: daysAgo(1) }),
+    ]);
 
     // eslint-disable-next-line no-console
     console.log('[seed] 演示数据已写入');

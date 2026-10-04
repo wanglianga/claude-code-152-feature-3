@@ -9,6 +9,7 @@ import { Delivery } from '../entities/delivery.entity';
 import { Ticket } from '../entities/ticket.entity';
 import { SellerProfile } from '../entities/seller-profile.entity';
 import { User } from '../entities/user.entity';
+import { Consignment } from '../entities/consignment.entity';
 import { JwtAuthGuard } from '../auth/jwt.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 
@@ -105,6 +106,28 @@ export class AnalyticsController {
           returnReasons[t.type] = (returnReasons[t.type] || 0) + 1;
         });
 
+      // 色差争议：发起数、成立（页面描述不准）数、自然光差异维持数、色差导致退货数
+      const colorTickets = catTickets.filter((t) => t.type === 'COLOR_DIFFERENCE');
+      const colorInaccurate = colorTickets.filter(
+        (t) => t.colorFinding === 'LISTING_INACCURATE',
+      ).length;
+      const colorNatural = colorTickets.filter(
+        (t) => t.colorFinding === 'NATURAL_VARIATION',
+      ).length;
+      const colorMixed = colorTickets.filter(
+        (t) => t.colorFinding === 'MIXED',
+      ).length;
+      const colorReturned = colorTickets.filter(
+        (t) => t.resolution === 'RETURN_REFUND',
+      ).length;
+
+      // 摄影规范：该品类待整改 / 差评商品
+      const photoRemedyOpen = catItems.filter(
+        (i) => i.photoStandardFlag === 'NEEDS_REMEDY',
+      ).length;
+      const badReviews = catItems.filter((i) => i.reviewStatus === 'BAD').length;
+      const goodReviews = catItems.filter((i) => i.reviewStatus === 'GOOD').length;
+
       // 配送失败率
       const failed = catDeliveries.filter((d) => d.status === 'FAILED');
       const failRate = catDeliveries.length
@@ -150,10 +173,44 @@ export class AnalyticsController {
         deliveryFailRatePct: failRate,
         deliveryFailReasons: failReasons,
         channelAdvice,
+        colorDisputeCount: colorTickets.length,
+        colorListingInaccurateCount: colorInaccurate,
+        colorNaturalVariationCount: colorNatural,
+        colorMixedCount: colorMixed,
+        colorReturnCount: colorReturned,
+        photoRemedyOpenCount: photoRemedyOpen,
+        badReviewCount: badReviews,
+        goodReviewCount: goodReviews,
       }
     });
 
     return { categories: result, generatedAt: new Date() };
+  }
+
+  /** 摄影规范整改队列：色差成立被标记 NEEDS_REMEDY、或退货取回中待回库复检的商品 */
+  @Roles('OPS', 'ADMIN', 'CS', 'WAREHOUSE')
+  @Get('photo-remedy-queue')
+  async photoRemedyQueue() {
+    const items = await this.ds.getRepository(Item).find({
+      order: { createdAt: 'DESC' },
+    });
+    const consignmentIds = Array.from(new Set(items.map((i) => i.consignmentId)));
+    const consignments = consignmentIds.length
+      ? await this.ds.getRepository(Consignment).find({
+          where: { id: In(consignmentIds) },
+        })
+      : [];
+    const cMap = new Map(consignments.map((c) => [c.id, c]));
+    return items
+      .filter(
+        (i) =>
+          i.photoStandardFlag === 'NEEDS_REMEDY' ||
+          i.status === 'RETURNING',
+      )
+      .map((i) => ({
+        ...i,
+        sellerId: cMap.get(i.consignmentId)?.sellerId,
+      }));
   }
 
   @Roles('OPS', 'ADMIN', 'CS', 'APPRAISER')

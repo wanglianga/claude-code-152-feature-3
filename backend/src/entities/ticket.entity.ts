@@ -86,6 +86,33 @@ export class Ticket {
   @Column({ type: 'text' })
   description: string;
 
+  // ---- 色差争议取证（COLOR_DIFFERENCE 专用）----
+  /** 买家现场照片 URL 列表 */
+  @Column({ type: 'jsonb', default: () => "'[]'" })
+  buyerPhotos: string[];
+
+  /** 买家现场光线：NATURAL_DAYLIGHT 自然光 / INDOOR_WARM 室内暖光 / INDOOR_COOL 室内冷光 / OTHER */
+  @Column({ type: 'varchar', length: 24, default: '' })
+  buyerLighting: string;
+
+  /** 买家现场补充说明（摆放位置、朝向、对比物等） */
+  @Column({ default: '' })
+  buyerSceneNote: string;
+
+  /**
+   * 色差裁定原因：
+   * LISTING_INACCURATE 页面描述不准确（颜色/修图失真/未提示色差）→ 平台承担退换或补偿
+   * NATURAL_VARIATION 自然光差异且页面已提示 → 维持交易 + 保养建议
+   * MIXED 部分属实（描述有瑕疵但买家光线也有影响）
+   * '' 非色差工单
+   */
+  @Column({ type: 'varchar', length: 24, default: '' })
+  colorFinding: string;
+
+  /** 维持交易时给买家的保养建议（色差成立退换时可为保养/翻新说明） */
+  @Column({ default: '' })
+  careAdvice: string;
+
   @CreateDateColumn()
   createdAt: Date;
 }

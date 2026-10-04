@@ -29,8 +29,33 @@ export const ITEM_STATUS: Record<string, { label: string; cls: string }> = {
   RESERVED: { label: '已锁定', cls: 'blue' },
   SOLD: { label: '已售出', cls: 'purple' },
   DELIVERED: { label: '已交付', cls: 'green' },
-  RETURNED: { label: '已退货', cls: 'red' },
+  RETURNING: { label: '退货取回中', cls: 'red' },
+  RETURNED: { label: '退货回库', cls: 'red' },
   OFF_SHELF: { label: '已下架', cls: 'gray' },
+};
+
+export const ITEM_REVIEW: Record<string, { label: string; cls: string }> = {
+  GOOD: { label: '好评/色差无异议', cls: 'green' },
+  NEUTRAL: { label: '评价中性', cls: 'gray' },
+  BAD: { label: '差评（色差成立）', cls: 'red' },
+};
+
+export const PHOTO_FLAG: Record<string, { label: string; cls: string }> = {
+  OK: { label: '摄影合规', cls: 'green' },
+  NEEDS_REMEDY: { label: '摄影规范待整改', cls: 'red' },
+};
+
+export const COLOR_FINDING: Record<string, { label: string; cls: string }> = {
+  LISTING_INACCURATE: { label: '页面描述不准确', cls: 'red' },
+  NATURAL_VARIATION: { label: '自然光差异（页面已提示）', cls: 'green' },
+  MIXED: { label: '部分属实', cls: 'amber' },
+};
+
+export const LIGHTING: Record<string, string> = {
+  NATURAL_DAYLIGHT: '自然光/日光',
+  INDOOR_WARM: '室内暖光',
+  INDOOR_COOL: '室内冷白光',
+  OTHER: '其他光线',
 };
 
 export const ORDER_STATUS: Record<string, { label: string; cls: string }> = {
@@ -136,5 +161,6 @@ export const SETTLEMENT_TYPE: Record<string, string> = {
   STORAGE_FEE: '仓储费',
   DELIVERY_FEE: '配送费',
   COMPENSATION: '售后赔付/退款',
+  RESIDUAL_VALUE: '退货回库残值',
   SELLER_PAYOUT: '卖家应得',
 };

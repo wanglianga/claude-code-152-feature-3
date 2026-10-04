@@ -219,6 +219,7 @@ export function MySettlements({ list }: { list: any[] }) {
   }, []);
 
   const settled = orders.filter((o) => settlements[o.id]);
+  const heldOrders = orders.filter((o: any) => o.settlementHold);
 
   return (
     <div>
@@ -228,8 +229,17 @@ export function MySettlements({ list }: { list: any[] }) {
           <div className="sub">成交价、佣金、翻新费、仓储费、配送费与售后赔付均逐项列明来源</div>
         </div>
       </div>
+      {heldOrders.length > 0 && (
+        <div className="banner risk">
+          {heldOrders.map((o: any) => (
+            <div key={o.id}>
+              订单 <b>{o.code}</b> 的结算暂缓：{o.settlementHoldReason || '售后退货处理中，等待家具回库复检与重新处理结果确认'}
+            </div>
+          ))}
+        </div>
+      )}
       {settled.length === 0 ? (
-        <Empty text="暂无已结算订单" />
+        <Empty text={heldOrders.length ? '暂无已结算订单；上述订单结算暂缓中' : '暂无已结算订单'} />
       ) : (
         <div className="grid">
           {settled.map((o) => {

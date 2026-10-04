@@ -61,6 +61,7 @@ function Market() {
                     : `可配送 ${it.deliveryRadiusKm}km`}
                 </span>
                 {it.disassemblable && <span className="tag">可拆装</span>}
+                {it.colorNotice && <span className="tag" style={{ background: '#fef3c7', color: '#92400e' }}>已提示实物色差</span>}
               </div>
               <p className="muted" style={{ fontSize: 12.5, minHeight: 38 }}>
                 {it.description?.slice(0, 56) || ''}
@@ -256,15 +257,33 @@ function MyOrders() {
 }
 
 function CreateTicketModal({ order, onClose, onCreated }: { order: any; onClose: () => void; onCreated: (id: string) => void }) {
-  const [f, setF] = useState({ type: 'COLOR_DIFFERENCE', title: '', description: '' });
+  const [f, setF] = useState({
+    type: 'COLOR_DIFFERENCE', title: '', description: '',
+    buyerPhotos: '', buyerLighting: 'NATURAL_DAYLIGHT', buyerSceneNote: '',
+  });
   const [busy, setBusy] = useState(false);
   const set = (k: string, v: any) => setF((p) => ({ ...p, [k]: v }));
+  const isColor = f.type === 'COLOR_DIFFERENCE';
 
   const submit = async () => {
     if (!f.title || !f.description) return toast('请填写标题和描述', true);
     setBusy(true);
     try {
-      const res = await api('/tickets', { body: { orderId: order.id, ...f } });
+      const res = await api('/tickets', {
+        body: {
+          orderId: order.id,
+          type: f.type,
+          title: f.title,
+          description: f.description,
+          ...(isColor
+            ? {
+                buyerPhotos: f.buyerPhotos ? f.buyerPhotos.split(/[,，\s]+/).filter(Boolean) : [],
+                buyerLighting: f.buyerLighting,
+                buyerSceneNote: f.buyerSceneNote,
+              }
+            : {}),
+        },
+      });
       toast('工单已创建，客服将尽快介入');
       onCreated(res.ticket.id);
     } catch (e: any) {
@@ -294,10 +313,34 @@ function CreateTicketModal({ order, onClose, onCreated }: { order: any; onClose:
             ))}
         </select>
       </Field>
+      {isColor && (
+        <div className="banner info">
+          客服会调取拍摄灯光、原图、修图记录与商品描述，与你的现场照片比对。
+          若属自然光差异且页面已提示色差，交易可维持并获得保养建议；若页面描述不准，平台承担退换或补偿。
+        </div>
+      )}
       <Field label="标题">
         <input value={f.title} onChange={(e) => set('title', e.target.value)} placeholder="一句话说明问题" />
       </Field>
-      <Field label="详细描述（可写现场情况、照片链接、诉求）">
+      {isColor && (
+        <>
+          <Field label="现场照片链接（多个用逗号分隔）">
+            <input value={f.buyerPhotos} onChange={(e) => set('buyerPhotos', e.target.value)} placeholder="https://…" />
+          </Field>
+          <Field label="拍摄时现场光线">
+            <select value={f.buyerLighting} onChange={(e) => set('buyerLighting', e.target.value)}>
+              <option value="NATURAL_DAYLIGHT">自然光/日光</option>
+              <option value="INDOOR_WARM">室内暖光（黄灯）</option>
+              <option value="INDOOR_COOL">室内冷白光</option>
+              <option value="OTHER">其他</option>
+            </select>
+          </Field>
+          <Field label="现场说明（摆放位置、朝向、对比参照物）">
+            <input value={f.buyerSceneNote} onChange={(e) => set('buyerSceneNote', e.target.value)} placeholder="如：靠北窗摆放，与家中白橡木地板对比偏黄" />
+          </Field>
+        </>
+      )}
+      <Field label="详细描述（可写现场情况、诉求）">
         <textarea style={{ minHeight: 100 }} value={f.description} onChange={(e) => set('description', e.target.value)} />
       </Field>
     </Modal>

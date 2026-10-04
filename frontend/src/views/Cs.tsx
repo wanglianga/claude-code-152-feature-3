@@ -140,6 +140,8 @@ function SettlementList() {
                     <td style={{ whiteSpace: 'nowrap' }}>
                       {s ? (
                         <button className="btn ghost sm" onClick={() => setOpenId(o.id)}>查看明细</button>
+                      ) : o.settlementHold ? (
+                        <span className="badge red" title={o.settlementHoldReason}>卖家结算暂缓</span>
                       ) : ['DELIVERED', 'RETURNED'].includes(o.status) ? (
                         <button className="btn sm" onClick={() => settle(o.id)}>生成结算单</button>
                       ) : (

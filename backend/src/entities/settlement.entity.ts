@@ -15,6 +15,7 @@ import {
  * STORAGE_FEE 仓储费（按天计，从卖家应得扣除）
  * DELIVERY_FEE 配送费（买家支付，结算给配送团队/平台）
  * COMPENSATION 售后赔付（责任方承担，来源工单）
+ * RESIDUAL_VALUE 退货回库残值（平台回收资产，来源仓库复检）
  * SELLER_PAYOUT 卖家最终应得（负数=付出）
  */
 export type SettlementEntryType =
@@ -24,6 +25,7 @@ export type SettlementEntryType =
   | 'STORAGE_FEE'
   | 'DELIVERY_FEE'
   | 'COMPENSATION'
+  | 'RESIDUAL_VALUE'
   | 'SELLER_PAYOUT';
 
 @Entity('settlements')

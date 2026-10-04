@@ -41,6 +41,18 @@ class CreateTicketDto {
   type: TicketType;
   title: string;
   description: string;
+  /** 色差工单：买家现场照片 */
+  buyerPhotos?: string[];
+  /** 色差工单：买家现场光线 */
+  buyerLighting?: string;
+  /** 色差工单：现场补充（朝向、摆放、对比物） */
+  buyerSceneNote?: string;
+}
+
+class ColorEvidenceDto {
+  buyerPhotos?: string[];
+  buyerLighting?: string;
+  buyerSceneNote?: string;
 }
 
 class ResolveDto {
@@ -52,10 +64,16 @@ class ResolveDto {
     | 'RETURN_REFUND'
     | 'RE_LIST'
     | 'CANCEL_CONSIGNMENT';
-  liableParty: 'SELLER' | 'BUYER' | 'PLATFORM' | 'DELIVERY' | 'REFURBISHER' | 'SHARED';
+  liableParty: 'SELLER' | 'BUYER' | 'PLATFORM' | 'DELIVERY' | 'REFURBISHER' | 'SHARED' | 'NONE';
   compensationAmount?: number;
   note?: string;
   newPrice?: number;
+  /** 色差裁定原因：LISTING_INACCURATE / NATURAL_VARIATION / MIXED */
+  colorFinding?: string;
+  /** 维持交易时提供的保养建议 */
+  careAdvice?: string;
+  /** 页面描述不准确→摄影规范整改要求（同步到商品，重新拍照上架前必须执行） */
+  photoRemedyNote?: string;
 }
 
 /**
@@ -128,6 +146,9 @@ export class TicketController {
         liableParty: 'SHARED',
         title: dto.title,
         description: dto.description,
+        buyerPhotos: dto.type === 'COLOR_DIFFERENCE' ? dto.buyerPhotos || [] : [],
+        buyerLighting: dto.type === 'COLOR_DIFFERENCE' ? dto.buyerLighting || '' : '',
+        buyerSceneNote: dto.type === 'COLOR_DIFFERENCE' ? dto.buyerSceneNote || '' : '',
       });
       await m.save(ticket);
 
@@ -203,6 +224,53 @@ export class TicketController {
     return msg;
   }
 
+  /** 买家/仓库补充色差取证：现场照片、现场光线、摆放说明 */
+  @Post(':id/color-evidence')
+  async colorEvidence(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: ColorEvidenceDto,
+  ) {
+    const ticket = await this.ds.getRepository(Ticket).findOne({ where: { id } });
+    if (!ticket) throw new NotFoundException('工单不存在');
+    if (ticket.type !== 'COLOR_DIFFERENCE') {
+      throw new BadRequestException('仅色差争议工单可补充色差取证');
+    }
+    await this.assertVisible(user, ticket);
+    if (ticket.status === 'CLOSED') {
+      throw new BadRequestException('工单已关闭，不可补充取证');
+    }
+    return this.ds.transaction(async (m) => {
+      if (dto.buyerPhotos) ticket.buyerPhotos = dto.buyerPhotos;
+      if (dto.buyerLighting != null) ticket.buyerLighting = dto.buyerLighting;
+      if (dto.buyerSceneNote != null) ticket.buyerSceneNote = dto.buyerSceneNote;
+      await m.save(ticket);
+
+      const lightingLabel: Record<string, string> = {
+        NATURAL_DAYLIGHT: '自然光/日光',
+        INDOOR_WARM: '室内暖光',
+        INDOOR_COOL: '室内冷白光',
+        OTHER: '其他光线',
+      };
+      const parts: string[] = [];
+      if (dto.buyerPhotos?.length) parts.push(`现场照片 ${dto.buyerPhotos.length} 张`);
+      if (dto.buyerLighting) parts.push(`现场光线：${lightingLabel[dto.buyerLighting] || dto.buyerLighting}`);
+      if (dto.buyerSceneNote) parts.push(dto.buyerSceneNote);
+      if (parts.length) {
+        await m.save(
+          m.create(TicketMessage, {
+            ticketId: id,
+            authorId: user.sub,
+            authorRole: user.role,
+            authorName: `${user.name}·色差取证`,
+            content: `【买家现场取证】${parts.join('；')}`,
+          }),
+        );
+      }
+      return this.buildDetail(m, ticket.id, null);
+    });
+  }
+
   /** 客服裁定处理结论，联动订单/商品/寄卖单状态；赔付金额写入工单供结算引用 */
   @Roles('CS', 'OPS', 'ADMIN')
   @Post(':id/resolve')
@@ -222,28 +290,12 @@ export class TicketController {
     if (!validResolutions.includes(dto.resolution)) {
       throw new BadRequestException('未知处理结论');
     }
+    const validFindings = ['LISTING_INACCURATE', 'NATURAL_VARIATION', 'MIXED'];
     return this.ds.transaction(async (m) => {
       const ticket = await m.findOne(Ticket, { where: { id } });
       if (!ticket) throw new NotFoundException('工单不存在');
       if (ticket.status === 'CLOSED') {
         throw new BadRequestException('工单已关闭');
-      }
-      ticket.resolution = dto.resolution;
-      ticket.liableParty = dto.liableParty;
-      ticket.compensationAmount = String(Number(dto.compensationAmount || 0));
-      ticket.status = 'RESOLVED';
-      await m.save(ticket);
-
-      if (dto.note) {
-        await m.save(
-          m.create(TicketMessage, {
-            ticketId: ticket.id,
-            authorId: ticket.createdBy,
-            authorRole: 'CS',
-            authorName: '客服裁定',
-            content: `【处理结论】${dto.note}（责任方：${dto.liableParty}，赔付：¥${ticket.compensationAmount}）`,
-          }),
-        );
       }
 
       const item = ticket.itemId
@@ -258,6 +310,108 @@ export class TicketController {
       const delivery = order
         ? await m.findOne(Delivery, { where: { orderId: order.id } })
         : null;
+
+      const isColor = ticket.type === 'COLOR_DIFFERENCE';
+      // 首次裁定才落评价/摄影整改；之后的重新处理结论（如复检后确认二次上架）不重复打标
+      const firstAdjudication = ticket.resolution === 'PENDING';
+      const finding = isColor
+        ? dto.colorFinding || (!firstAdjudication ? ticket.colorFinding : '') || ''
+        : '';
+      if (isColor && firstAdjudication && !validFindings.includes(finding)) {
+        throw new BadRequestException(
+          '色差争议需选择裁定原因：页面描述不准确 / 自然光差异 / 部分属实',
+        );
+      }
+
+      if (isColor) {
+        if (finding === 'NATURAL_VARIATION') {
+          // 页面已做色差提示，才能按自然光差异维持交易
+          if (!item?.colorNotice) {
+            throw new BadRequestException(
+              '页面未做色差提示，不能按「自然光差异」维持交易；请改判页面描述不准确或部分属实',
+            );
+          }
+          if (!['KEEP_LISTING'].includes(dto.resolution)) {
+            throw new BadRequestException(
+              '自然光差异且页面已提示：应维持交易（可附保养建议），退换/赔付不成立',
+            );
+          }
+          if (!dto.careAdvice?.trim()) {
+            throw new BadRequestException('维持交易需向买家提供保养/摆放建议');
+          }
+        }
+        if (finding === 'LISTING_INACCURATE') {
+          if (dto.resolution === 'KEEP_LISTING') {
+            throw new BadRequestException(
+              '页面描述不准确成立时平台需承担退换或补偿，不能维持原交易',
+            );
+          }
+          if (!['PLATFORM', 'SHARED'].includes(dto.liableParty)) {
+            throw new BadRequestException(
+              '页面描述不准确属于平台上架责任，责任方应为平台或多方共担',
+            );
+          }
+        }
+      }
+
+      ticket.resolution = dto.resolution;
+      ticket.liableParty = dto.liableParty;
+      // 重复裁定（如退货后确认二次上架）未传金额时保留原赔付，避免清零
+      ticket.compensationAmount =
+        dto.compensationAmount != null
+          ? String(Number(dto.compensationAmount || 0))
+          : ticket.compensationAmount;
+      ticket.status = 'RESOLVED';
+      if (firstAdjudication || !ticket.colorFinding) {
+        ticket.colorFinding = finding;
+      }
+      ticket.careAdvice = dto.careAdvice || ticket.careAdvice || '';
+      await m.save(ticket);
+
+      if (dto.note || (finding && firstAdjudication)) {
+        const findingLabel: Record<string, string> = {
+          LISTING_INACCURATE: '页面描述不准确',
+          NATURAL_VARIATION: '自然光差异（页面已提示）',
+          MIXED: '部分属实',
+        };
+        const segs: string[] = [];
+        if (finding) segs.push(`色差裁定原因：${findingLabel[finding]}`);
+        if (dto.note) segs.push(dto.note);
+        if (dto.careAdvice) segs.push(`保养建议：${dto.careAdvice}`);
+        await m.save(
+          m.create(TicketMessage, {
+            ticketId: ticket.id,
+            authorId: ticket.createdBy,
+            authorRole: 'CS',
+            authorName: '客服裁定',
+            content: `【处理结论】${segs.join('；')}（责任方：${dto.liableParty}，赔付：¥${ticket.compensationAmount}）`,
+          }),
+        );
+      }
+
+      // ---- 色差裁定对商品评价与摄影规范的联动（仅首次裁定；复检后二次上架确认不重置整改结论）----
+      if (isColor && item && firstAdjudication) {
+        if (finding === 'LISTING_INACCURATE') {
+          item.reviewStatus = 'BAD';
+          item.reviewNote = `色差成立：${dto.note || '页面颜色描述/照片与实物不符'}`;
+          item.photoStandardFlag = 'NEEDS_REMEDY';
+          item.photoRemedyNote =
+            dto.photoRemedyNote?.trim() ||
+            '重新拍摄标准光线下照片并附原图，修正页面颜色描述，显著标注不同光线色差提示';
+        } else if (finding === 'NATURAL_VARIATION') {
+          item.reviewStatus = 'GOOD';
+          item.reviewNote = '买家认可：自然光差异，页面已有色差提示';
+        } else if (finding === 'MIXED') {
+          item.reviewStatus = 'NEUTRAL';
+          item.reviewNote = `色差部分属实：${dto.note || '描述不够充分，买家光线也有影响'}`;
+          if (dto.photoRemedyNote?.trim() || !item.colorNotice) {
+            item.photoStandardFlag = 'NEEDS_REMEDY';
+            item.photoRemedyNote =
+              dto.photoRemedyNote?.trim() ||
+              '补充自然光/暖光对比图与色差提示，完善颜色描述';
+          }
+        }
+      }
 
       switch (dto.resolution) {
         case 'CANCEL_CONSIGNMENT':
@@ -276,14 +430,19 @@ export class TicketController {
           break;
         case 'RETURN_REFUND':
           if (order) {
+            // 已送达：进入退货取回流程，卖家结算暂缓，待家具回库复检结论确认
             order.status =
               order.status === 'DELIVERED' || order.status === 'SETTLED'
-                ? 'RETURNED'
+                ? 'RETURNING'
                 : 'RETURNING';
+            order.settlementHold = true;
+            order.settlementHoldReason = isColor
+              ? '色差售后退货成立：等待家具回库残值评估、仓储费核算与二次上架结论，卖家结算暂缓'
+              : '售后退货成立：等待家具回库复检与重新处理结果确认，卖家结算暂缓';
             await m.save(order);
           }
           if (item) {
-            item.status = 'RETURNED';
+            item.status = 'RETURNING';
             await m.save(item);
           }
           if (delivery && delivery.status !== 'DONE') {
@@ -311,23 +470,33 @@ export class TicketController {
           }
           break;
         case 'RE_LIST':
-          if (item && ['RETURNED', 'RESERVED'].includes(item.status)) {
-            item.status = 'LISTED';
-            await m.save(item);
+          if (!item || !['RETURNED'].includes(item.status)) {
+            throw new BadRequestException(
+              '家具尚未完成回库复检，不能二次上架（请先由仓库登记残值评估与复检结论）',
+            );
           }
-          if (order && order.status === 'RETURNING') {
-            order.status = 'CANCELLED';
-            await m.save(order);
+          if (!item.relistEligible) {
+            throw new BadRequestException(
+              '复检结论为不可二次上架，应改为终止寄卖/下架处理',
+            );
           }
+          if (item.photoStandardFlag === 'NEEDS_REMEDY') {
+            throw new BadRequestException(
+              '该商品摄影规范整改未完成（重新拍照/修正描述/色差提示），暂不能二次上架',
+            );
+          }
+          item.status = 'LISTED';
+          item.listedAt = new Date();
           break;
         case 'KEEP_LISTING':
           if (item && item.status === 'RESERVED' && !order) {
             item.status = 'LISTED';
-            await m.save(item);
           }
+          // 色差维持交易：订单继续履约，不暂缓结算
           break;
       }
 
+      if (item) await m.save(item);
       if (consignment) {
         await this.risk.recalculate(consignment.sellerId);
       }

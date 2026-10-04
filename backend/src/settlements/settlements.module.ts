@@ -66,6 +66,11 @@ export class SettlementController {
       }
       const order = await m.findOne(Order, { where: { id: orderId } });
       if (!order) throw new NotFoundException('订单不存在');
+      if (order.settlementHold) {
+        throw new BadRequestException(
+          `卖家结算暂缓中：${order.settlementHoldReason || '等待退货回库复检与重新处理结果确认'}`,
+        );
+      }
       if (!['DELIVERED', 'RETURNED'].includes(order.status)) {
         throw new BadRequestException(
           `订单当前 ${order.status}，需送达或退货完结后方可结算`,
@@ -157,6 +162,14 @@ export class SettlementController {
             `库位 ${item.warehouseSlot || '-'} 入仓 ${storageDays} 天 × ¥${STORAGE_DAILY_RATE}/天（来源：入库时间；退货由平台吸收）`,
           );
         }
+        const returnStorage = Number(item.returnStorageFee || 0);
+        if (returnStorage > 0) {
+          add(
+            'STORAGE_FEE',
+            returnStorage,
+            `退货返程/复检额外仓储费 ¥${returnStorage}（来源：仓库回库复检作业记录，平台吸收）`,
+          );
+        }
         if (deliveryFee > 0) {
           add(
             'DELIVERY_FEE',
@@ -164,7 +177,23 @@ export class SettlementController {
             `配送费（来源：楼层/电梯/旧家具搬出计价；退货返程由平台承担）`,
           );
         }
-        platformIncome = -(refurb + storageFee + deliveryFee);
+        const residual = Number(item.residualValue || 0);
+        if (residual > 0) {
+          add(
+            'RESIDUAL_VALUE',
+            item.relistEligible ? 0 : residual,
+            `退货回库残值评估 ¥${residual}（来源：仓库回库复检${
+              item.returnedAt ? `（${new Date(item.returnedAt).toLocaleDateString('zh-CN')}）` : ''
+            }；${
+              item.relistEligible
+                ? '可二次上架：残值作为再上架定价参考，不计入本单净额，成交后另按新订单结算'
+                : '不可二次上架：按残值处置，冲抵平台吸收成本'
+            }）`,
+          );
+        }
+        // 仅不可二次上架时残值才实际冲抵平台损失
+        const residualOffset = item.relistEligible ? 0 : residual;
+        platformIncome = -(refurb + storageFee + returnStorage + deliveryFee) + residualOffset;
       } else {
         const commission = Math.round(deal * rate * 100) / 100;
         add(

@@ -78,6 +78,17 @@ export class Order {
   @Column({ default: '' })
   deliveryNote: string;
 
+  /**
+   * 结算是否暂缓：售后退货成立、家具回库残值与二次上架结论未确认前为 true，
+   * 卖家结算暂缓，待新处理结果确认后解除。
+   */
+  @Column({ default: false })
+  settlementHold: boolean;
+
+  /** 暂缓原因（如「色差退货成立，等待回库残值评估与重新上架结论」） */
+  @Column({ default: '' })
+  settlementHoldReason: string;
+
   @CreateDateColumn()
   createdAt: Date;
 }
